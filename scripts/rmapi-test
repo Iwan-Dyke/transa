@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+cd "$(dirname "$0")/.."
+root="$PWD"
+mode="${1:-}"
+case "$mode" in
+    pair) args=(-json ls); interactive=(-it) ;;
+    list) args=(-ni -json find /); interactive=() ;;
+    download)
+        [[ $# -eq 2 && "$2" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || {
+            echo 'Usage: just download DOCUMENT_UUID' >&2
+            exit 2
+        }
+        args=(-ni get --id "$2"); interactive=()
+        ;;
+    *) echo 'Use: just pair, just list, or just download DOCUMENT_UUID' >&2; exit 2 ;;
+esac
+
+[[ -d .local/state && -d .local/downloads ]] || {
+    echo 'Run just setup first.' >&2
+    exit 1
+}
+
+if [[ -x .local/bin/rmapi ]]; then
+    export RMAPI_CONFIG="$root/.local/state/auth"
+    cd .local/downloads
+    exec "$root/.local/bin/rmapi" "${args[@]}"
+fi
+
+# Use host ownership so downloaded notes and refreshed tokens stay accessible.
+exec docker run --rm "${interactive[@]}" \
+    --user "$(id -u):$(id -g)" \
+    --env HOME=/tmp \
+    --env RMAPI_CONFIG=/state/auth \
+    --mount "type=bind,source=$root/.local/state,target=/state" \
+    --mount "type=bind,source=$root/.local/downloads,target=/downloads" \
+    --workdir /downloads \
+    transa-rmapi:experiment "${args[@]}"
